@@ -46,13 +46,17 @@ def main(
     if cleaned_path is None:
         cleaned_path = metadata + ".cleaned"
 
+    new_symbols = []
+    phones = []
+    tones = []
+    word2ph = []
     if clean:
         out_file = open(cleaned_path, "w", encoding="utf-8")
-        new_symbols = []
+        
         for line in tqdm(open(metadata, encoding="utf-8").readlines()):
             try:
-                utt, spk, language, text = line.strip().split("|")
-                norm_text, phones, tones, word2ph, bert = clean_text_bert(text, language, device='cuda:0')
+                utt, spk, language, text, text_num = line.strip().split("|")
+                norm_text, norm_text_num, phones, tones, word2ph, bert = clean_text_bert(text, language, text_num, device='cuda:0')
                 for ph in phones:
                     if ph not in symbols and ph not in new_symbols:
                         new_symbols.append(ph)
@@ -60,7 +64,7 @@ def main(
                         print(new_symbols)
                         with open(f'{language}_symbol.txt', 'w') as f:
                             f.write(f'{new_symbols}')
-
+                # print(norm_text_num, phones, tones, word2ph, bert.size())
                 assert len(phones) == len(tones)
                 assert len(phones) == sum(word2ph)
                 out_file.write(
@@ -78,7 +82,7 @@ def main(
                 os.makedirs(os.path.dirname(bert_path), exist_ok=True)
                 torch.save(bert.cpu(), bert_path)
             except Exception as error:
-                print("err!", line, error)
+                print("err!", len(phones), len(tones), sum(word2ph), line, error)
 
         out_file.close()
 
@@ -125,8 +129,8 @@ def main(
     config["data"]["n_speakers"] = len(spk_id_map)
     config["num_languages"] = num_languages
     config["num_tones"] = num_tones
-    config["symbols"] = symbols
-
+    config["symbols"] = symbols + new_symbols # new_symbols多補上去
+ 
     with open(out_config_path, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
 

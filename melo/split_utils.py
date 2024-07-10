@@ -6,12 +6,13 @@ import soundfile as sf
 import torchaudio
 import re
 
-def split_sentence(text, min_len=10, language_str='EN'):
+def split_sentence(text, text_num, min_len=10, language_str='EN'):
+    sentences_num = []
     if language_str in ['EN', 'FR', 'ES', 'SP']:
         sentences = split_sentences_latin(text, min_len=min_len)
     else:
-        sentences = split_sentences_zh(text, min_len=min_len)
-    return sentences
+        sentences, sentences_num = split_sentences_zh(text, text_num, min_len=min_len)
+    return sentences, sentences_num
 
 
 def split_sentences_latin(text, min_len=10):
@@ -23,7 +24,7 @@ def split_sentences_latin(text, min_len=10):
     return [item.strip() for item in txtsplit(text, 256, 512) if item.strip()]
 
 
-def split_sentences_zh(text, min_len=10):
+def get_sentences(text):
     text = re.sub('[。！？；]', '.', text)
     text = re.sub('[，]', ',', text)
     # 将文本中的换行符、空格和制表符替换为空格
@@ -35,17 +36,29 @@ def split_sentences_zh(text, min_len=10):
     sentences = [s.strip() for s in text.split('$#!')]
     if len(sentences[-1]) == 0: del sentences[-1]
 
+    return sentences
+
+def split_sentences_zh(text, text_num, min_len=10):
+
+    sentences = get_sentences(text)
+    sentences_num = get_sentences(text_num)
+
     new_sentences = []
     new_sent = []
+    new_sentences_num = []
+    new_sent_num = []
     count_len = 0
     for ind, sent in enumerate(sentences):
         new_sent.append(sent)
+        new_sent_num.append(sentences_num[ind])
         count_len += len(sent)
         if count_len > min_len or ind == len(sentences) - 1:
             count_len = 0
             new_sentences.append(' '.join(new_sent))
+            new_sentences_num.append(' '.join(new_sent_num))
             new_sent = []
-    return merge_short_sentences_zh(new_sentences)
+            new_sent_num = []
+    return merge_short_sentences_zh(new_sentences), merge_short_sentences_zh(new_sentences_num)
 
 
 def merge_short_sentences_en(sens):

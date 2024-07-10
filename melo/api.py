@@ -72,17 +72,19 @@ class TTS(nn.Module):
         return audio_segments
 
     @staticmethod
-    def split_sentences_into_pieces(text, language, quiet=False):
-        texts = split_sentence(text, language_str=language)
+    def split_sentences_into_pieces(text, texts_num, language, quiet=False):
+        texts, texts_num = split_sentence(text, texts_num, language_str=language)
         if not quiet:
             print(" > Text split to sentences.")
             print('\n'.join(texts))
+            print('\n'.join(texts_num))
             print(" > ===========================")
-        return texts
+        return texts, texts_num
 
-    def tts_to_file(self, text, speaker_id, output_path=None, sdp_ratio=0.2, noise_scale=0.6, noise_scale_w=0.8, speed=1.0, pbar=None, format=None, position=None, quiet=False,):
+    def tts_to_file(self, text, text_num, speaker_id, output_path=None, sdp_ratio=0.2, noise_scale=0.6, noise_scale_w=0.8, speed=1.0, pbar=None, format=None, position=None, quiet=False,):
         language = self.language
-        texts = self.split_sentences_into_pieces(text, language, quiet)
+        texts, text_num = self.split_sentences_into_pieces(text, text_num, language, quiet)
+        # text_num = self.split_sentences_into_pieces(text_num, language = "EN", quiet = False)
         audio_list = []
         if pbar:
             tx = pbar(texts)
@@ -93,16 +95,18 @@ class TTS(nn.Module):
                 tx = texts
             else:
                 tx = tqdm(texts)
-        for t in tx:
+        for idx, t in enumerate(tx):
             if language in ['EN', 'ZH_MIX_EN']:
                 t = re.sub(r'([a-z])([A-Z])', r'\1 \2', t)
             device = self.device
-            bert, ja_bert, phones, tones, lang_ids = utils.get_text_for_tts_infer(t, language, self.hps, device, self.symbol_to_id)
+            bert, ja_bert, phones, tones, lang_ids = utils.get_text_for_tts_infer(t, text_num[idx], language, self.hps, device, self.symbol_to_id)
             with torch.no_grad():
                 x_tst = phones.to(device).unsqueeze(0)
                 tones = tones.to(device).unsqueeze(0)
                 lang_ids = lang_ids.to(device).unsqueeze(0)
                 bert = bert.to(device).unsqueeze(0)
+                # print(bert.size())
+                # bert = torch.randn((1, 1024, len(phones)))
                 ja_bert = ja_bert.to(device).unsqueeze(0)
                 x_tst_lengths = torch.LongTensor([phones.size(0)]).to(device)
                 del phones

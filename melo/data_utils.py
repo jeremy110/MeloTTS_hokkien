@@ -10,8 +10,50 @@ from utils import load_filepaths_and_text
 from utils import load_wav_to_torch_librosa as load_wav_to_torch
 from text import cleaned_text_to_sequence, get_bert
 import numpy as np
+import re
 
 """Multi speaker version"""
+
+def insert_SP(phone, tone, language, word2ph, res_SP, sp_symbol = 217):
+    
+    new_phone = []
+    new_tone = []
+    new_language = []
+    prev_idx = 0
+    success_flag = False
+    try:
+        for sp in res_SP:
+            idx = sum(word2ph[: sp])
+            new_phone.extend(phone[prev_idx: idx] + [sp_symbol])
+            new_tone.extend(tone[prev_idx: idx] + [0])
+            new_language.extend(language[prev_idx: idx] + [0])
+            prev_idx = idx
+
+        new_phone.extend(phone[prev_idx: ])
+        new_tone.extend(tone[prev_idx: ])
+        new_language.extend(language[prev_idx: ])
+        success_flag = True
+        return new_phone, new_tone, new_language, success_flag
+    except:
+        return phone, tone, language, success_flag
+
+
+def insert_zero_vector(word2phone, res_SP, bert_emb):
+
+    zero_vec = torch.zeros(1024, 1)
+    final_bert_emb = []
+    pred_idx = 0
+    for sp in res_SP:
+        idx = sum(word2phone[: sp])
+        final_bert_emb.append(bert_emb[:, pred_idx: idx])
+        final_bert_emb.append(zero_vec)
+        pred_idx = idx
+
+    final_bert_emb.append(bert_emb[:, pred_idx: ])
+    final_bert_emb = torch.cat(final_bert_emb, dim = -1)
+        
+    # print(f'final_bert_emb {final_bert_emb.size(-1)}')
+    return final_bert_emb
 
 
 class TextAudioSpeakerLoader(torch.utils.data.Dataset):
@@ -65,8 +107,9 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
         for item in tqdm(
             self.audiopaths_sid_text
         ):
-            try:
-                _id, spk, language, text, phones, tone, word2ph = item
+            try: # New: add text_num for sp symbol
+                _id, spk, language, text, phones, tone, word2ph, text_num = item 
+                print(item)
             except:
                 print(item)
                 raise
@@ -76,7 +119,7 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
                 tone = [int(i) for i in tone.split(" ")]
                 word2ph = [int(i) for i in word2ph.split(" ")]
                 audiopaths_sid_text_new.append(
-                    [audiopath, spk, language, text, phones, tone, word2ph]
+                    [audiopath, spk, language, text, phones, tone, word2ph, text_num]
                 )
                 lengths.append(os.path.getsize(audiopath) // (2 * self.hop_length))
             else:
@@ -93,10 +136,10 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
 
     def get_audio_text_speaker_pair(self, audiopath_sid_text):
         # separate filename, speaker_id and text
-        audiopath, sid, language, text, phones, tone, word2ph = audiopath_sid_text
+        audiopath, sid, language, text, phones, tone, word2ph, text_num = audiopath_sid_text
 
         bert, ja_bert, phones, tone, language = self.get_text(
-            text, word2ph, phones, tone, language, audiopath
+            text, word2ph, phones, tone, language, audiopath, text_num
         )
 
         spec, wav = self.get_audio(audiopath)
@@ -147,7 +190,7 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
             torch.save(spec, spec_filename)
         return spec, audio_norm
 
-    def get_text(self, text, word2ph, phone, tone, language_str, wav_path):
+    def get_text(self, text, word2ph, phone, tone, language_str, wav_path, text_num):
         phone, tone, language = cleaned_text_to_sequence(phone, tone, language_str)
         if self.add_blank:
             phone = commons.intersperse(phone, 0)
@@ -156,9 +199,19 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
             for i in range(len(word2ph)):
                 word2ph[i] = word2ph[i] * 2
             word2ph[0] += 1
+
+            # New: 如果是字跟字中間的話將 0 取代成 SP(217)
+            res_SP = self.ckip(text_num)
+            # phone = self.add_SP(phone, word2ph, res_SP)
+            phone, tone, language, success_flag = insert_SP(phone, tone, language, word2ph, res_SP)
+
         bert_path = wav_path.replace(".wav", ".bert.pt")
         try:
             bert = torch.load(bert_path)
+            # New
+            if success_flag:
+                bert = insert_zero_vector(word2ph, res_SP, bert)
+
             assert bert.shape[-1] == len(phone)
         except Exception as e:
             print(e, wav_path, bert_path, bert.shape, len(phone))
@@ -166,6 +219,7 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
             torch.save(bert, bert_path)
             assert bert.shape[-1] == len(phone), phone
 
+        
         if self.disable_bert:
             bert = torch.zeros(1024, len(phone))
             ja_bert = torch.zeros(768, len(phone))
@@ -176,6 +230,9 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
             elif language_str in ["JP", "EN", "ZH_MIX_EN", "KR", 'SP', 'ES', 'FR', 'DE', 'RU']:
                 ja_bert = bert
                 bert = torch.zeros(1024, len(phone))
+            elif language_str in ["TAI"]:
+                bert = bert
+                ja_bert = torch.zeros(768, len(phone))
             else:
                 raise
                 bert = torch.zeros(1024, len(phone))
@@ -185,6 +242,55 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
         tone = torch.LongTensor(tone)
         language = torch.LongTensor(language)
         return bert, ja_bert, phone, tone, language
+
+    def ckip(self, text_num):
+        text_num = text_num.replace('--', '-').replace('？', '').replace('.', '。')
+
+        text_num_arr = re.split(r'\s+|-|(:)|(,)|(。)|(？)|(!)', text_num)
+        text_num_arr = [item for item in text_num_arr if item]
+
+        w = re.split(r'\s+|(:)|(,)|(。)|(？)|(!)', text_num)
+        w = [item for item in w if item]
+
+        a_idx = 0
+        prev_is_punct = False
+        punct_arr = [',', ':', '。', '？', '!']
+        res_SP = []
+
+        for idx, val in enumerate(w):
+            char_arr = val.split('-')
+            L = len(char_arr)
+            if L == 1:
+                if val in punct_arr:
+                    prev_is_punct = True
+                else:
+                    if prev_is_punct == False and idx != 0:
+                        res_SP.append(a_idx + 1)
+                    prev_is_punct = False
+                a_idx += 1
+            else:
+                if prev_is_punct == False and idx != 0:
+                    res_SP.append(a_idx + 1)
+                a_idx += L
+        
+        return res_SP
+
+    def add_SP(self, phone, word2phone, res_SP, sp_symbol = 217):
+        # phone = [0, 0, 0, 51, 0, 87, 0, 51, 0, 124, 0, 119, 0, 211, 0, 89, 0, 76, 0, 87, 0, 51, 0, 46, 0, 93, 0, 19, 0, 51, 0, 119, 0, 70, 0, 19, 0, 119, 0, 37, 0, 82, 0, 198, 0, 200, 0, 201, 0, 198, 0, 51, 0, 68, 0, 211, 0, 0, 0]
+        # phone = [0, 0, 0, 51, 0, 87, 0, 51, 0, 124, 0, 119, 0, 211, 0, 89, 0, 76, 1, 87, 0, 51, 1, 46, 0, 93, 0, 19, 1, 51, 0, 119, 0, 70, 0, 19, 0, 119, 1, 37, 1, 82, 0, 198, 0, 200, 0, 201, 0, 198, 0, 51, 0, 68, 0, 211, 0, 0, 0]
+        # word2phone = [3, 2, 8, 2, 4, 4, 6, 4, 6, 2, 6, 8, 2, 2]
+        # print('\nphone, res_sp', phone, res_SP)
+        new_phone = phone.copy()
+        try:
+            for sp in res_SP:
+                idx = sum(word2phone[: sp])
+                new_phone[idx - 1] = sp_symbol
+            return new_phone
+        except:
+            return phone
+            
+        # print(phone)
+        
 
     def get_sid(self, sid):
         sid = torch.LongTensor([int(sid)])

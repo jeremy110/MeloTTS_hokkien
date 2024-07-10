@@ -490,7 +490,7 @@ class ConvFlow(nn.Module):
         h = self.proj(h) * x_mask
 
         b, c, t = x0.shape
-        h = h.reshape(b, c, -1, t).permute(0, 1, 3, 2)  # [b, cx?, t] -> [b, c, t, ?]
+        h = h.reshape(b, c, -1, t).permute(0, 1, 3, 2).contiguous()  # [b, cx?, t] -> [b, c, t, ?]
 
         unnormalized_widths = h[..., : self.num_bins] / math.sqrt(self.filter_channels)
         unnormalized_heights = h[..., self.num_bins : 2 * self.num_bins] / math.sqrt(

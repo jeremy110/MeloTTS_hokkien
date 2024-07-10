@@ -66,6 +66,8 @@ def run():
         utils.check_git_hash(hps.model_dir)
         writer = SummaryWriter(log_dir=hps.model_dir)
         writer_eval = SummaryWriter(log_dir=os.path.join(hps.model_dir, "eval"))
+    # print(hps.data.training_files, hps.data)
+    print(hps.data.training_files, hps.data)
     train_dataset = TextAudioSpeakerLoader(hps.data.training_files, hps.data)
     train_sampler = DistributedBucketSampler(
         train_dataset,
@@ -78,13 +80,13 @@ def run():
     collate_fn = TextAudioSpeakerCollate()
     train_loader = DataLoader(
         train_dataset,
-        num_workers=16,
+        num_workers=8,
         shuffle=False,
         pin_memory=True,
         collate_fn=collate_fn,
         batch_sampler=train_sampler,
         persistent_workers=True,
-        prefetch_factor=4,
+        #prefetch_factor=4,
     )  # DataLoader config could be adjusted.
     if rank == 0:
         eval_dataset = TextAudioSpeakerLoader(hps.data.validation_files, hps.data)
@@ -163,8 +165,11 @@ def run():
         )
     else:
         optim_dur_disc = None
-    net_g = DDP(net_g, device_ids=[rank], find_unused_parameters=True)
-    net_d = DDP(net_d, device_ids=[rank], find_unused_parameters=True)
+    # net_g = DDP(net_g, device_ids=[rank], find_unused_parameters=True)
+    # net_d = DDP(net_d, device_ids=[rank], find_unused_parameters=True)
+
+    net_g = DDP(net_g, device_ids=[rank])
+    net_d = DDP(net_d, device_ids=[rank])
     
     pretrain_G, pretrain_D, pretrain_dur = load_pretrain_model()
     hps.pretrain_G = hps.pretrain_G or pretrain_G
@@ -408,13 +413,13 @@ def train_and_evaluate(
                 optim_dur_disc.zero_grad()
                 scaler.scale(loss_dur_disc_all).backward()
                 scaler.unscale_(optim_dur_disc)
-                commons.clip_grad_value_(net_dur_disc.parameters(), None)
+                commons.clip_grad_value_(net_dur_disc.parameters(), 100)
                 scaler.step(optim_dur_disc)
 
         optim_d.zero_grad()
         scaler.scale(loss_disc_all).backward()
         scaler.unscale_(optim_d)
-        grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
+        grad_norm_d = commons.clip_grad_value_(net_d.parameters(), 200)
         scaler.step(optim_d)
 
         with autocast(enabled=hps.train.fp16_run):
@@ -436,7 +441,7 @@ def train_and_evaluate(
         optim_g.zero_grad()
         scaler.scale(loss_gen_all).backward()
         scaler.unscale_(optim_g)
-        grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
+        grad_norm_g = commons.clip_grad_value_(net_g.parameters(), 500)
         scaler.step(optim_g)
         scaler.update()
 

@@ -93,7 +93,7 @@ def spectrogram_torch_conv(y, n_fft, sampling_rate, hop_size, win_size, center=F
     # ******************** ConvSTFT ************************#
     freq_cutoff = n_fft // 2 + 1
     fourier_basis = torch.view_as_real(torch.fft.fft(torch.eye(n_fft)))
-    forward_basis = fourier_basis[:freq_cutoff].permute(2, 0, 1).reshape(-1, 1, fourier_basis.shape[1])
+    forward_basis = fourier_basis[:freq_cutoff].permute(2, 0, 1).contiguous().reshape(-1, 1, fourier_basis.shape[1])
     forward_basis = forward_basis * torch.as_tensor(librosa.util.pad_center(torch.hann_window(win_size), size=n_fft)).float()
 
     import torch.nn.functional as F
